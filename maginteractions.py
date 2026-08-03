@@ -762,20 +762,32 @@ class MagInteractions:
                 damping_matrices = self.damping_matrices
 
         if dim == 1:
-            r_nn = self.r_nn_vec @ subspace_vecs  # project r_nn onto 1D subspace
-            chi_0 = self.calc_chi_0(temperatures=temperatures)
+            if np.shape(damping_matrices)[1] == 3:
+                decay_term = np.exp(-np.sqrt(self.r_nn_vec @ damping_matrices @ self.r_nn_vec))
+            elif np.shape(damping_matrices)[1] == 2:
+                raise ValueError(
+                    'Damping matrix dimensionality does not match specified correlation dimensionality.')
+            else:
+                r_nn = self.r_nn_vec @ subspace_vecs  # project r_nn onto 1D subspace
+                decay_term = np.exp(-r_nn * np.sqrt(damping_matrices)).ravel()
 
+            chi_0 = self.calc_chi_0(temperatures=temperatures)                
             c_0 = 1 / chi_0 - j_0 + orfs
-            decay_term = np.exp(-r_nn * np.sqrt(damping_matrices)).ravel()
             prefactor = np.sqrt(2) * np.pi * n_ord_vec / self.bz_len / self.N
             local_correlations = (prefactor * temperatures * decay_term
                                   / np.sqrt(-j_hessian * c_0))
             lmops = self.g_nn * np.sqrt(np.abs(local_correlations)) / self.occ_avg
 
         elif dim == 2:
-            r_nn = self.r_nn_vec @ subspace_vecs  # project r_nn onto 2D subspace
+            if np.shape(damping_matrices)[1] == 3:
+                decay_term = kn(0, np.sqrt(self.r_nn_vec @ damping_matrices @ self.r_nn_vec))
+            elif np.shape(damping_matrices)[1] == 1:
+                raise ValueError(
+                    'Damping matrix dimensionality does not match specified correlation dimensionality.')
+            else:
+                r_nn = self.r_nn_vec @ subspace_vecs  # project r_nn onto 2D subspace
+                decay_term = kn(0, np.sqrt(r_nn @ damping_matrices @ r_nn))
 
-            decay_term = kn(0, np.sqrt(r_nn @ damping_matrices @ r_nn))
             prefactor = 4 * np.pi * n_ord_vec / self.bz_area / self.N
             local_correlations = (prefactor * temperatures * decay_term
                                   / np.sqrt(np.prod(j_hessian)))
@@ -871,7 +883,7 @@ class MagInteractions:
                                                    j_hessian=j_hessian,
                                                    subspace_vecs=subspace_vecs, store=False)
 
-                        if dim != 3:
+                        if dim != 3 and not isotropic:
                             damping_matrix = self.calc_3d_damping_matrix(
                                 damping_matrix=damping_matrix, subspace_vecs=subspace_vecs)
 
@@ -907,6 +919,6 @@ class MagInteractions:
                             j_0=j_0, j_hessian=j_hessian, subspace_vecs=subspace_vecs,
                             store=True)
 
-        if dim != 3:
+        if dim != 3 and not isotropic:
             self.damping_matrices = self.calc_3d_damping_matrix(
                 damping_matrix=self.damping_matrices, subspace_vecs=subspace_vecs)
