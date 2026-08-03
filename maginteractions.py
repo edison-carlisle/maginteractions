@@ -876,8 +876,7 @@ class MagInteractions:
                                 damping_matrix=damping_matrix, subspace_vecs=subspace_vecs)
 
                         damping_matrix = damping_matrix[0]  # make it 2D instead of 3D since we're
-                        # only calculating for one temperature
-                        # at a time
+                        # only calculating for one temperature at a time
 
                         if isotropic:
                             corr_length = (self.r_nn /
