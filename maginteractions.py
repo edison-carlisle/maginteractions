@@ -762,7 +762,7 @@ class MagInteractions:
                 damping_matrices = self.damping_matrices
 
         if dim == 1:
-            r_nn = self.r_nn_vec @ subspace_vecs  # project r_nn onto 1D subspace
+            r_nn = np.abs(self.r_nn_vec @ subspace_vecs)  # project r_nn onto 1D subspace
             chi_0 = self.calc_chi_0(temperatures=temperatures)
 
             c_0 = 1 / chi_0 - j_0 + orfs
@@ -823,6 +823,8 @@ class MagInteractions:
             sum_rule_orf (bool): whether to calculate the ORF using the sum rule (True) or by
                 directly calculating the ORF from the real space correlations (False). Default
                 is False. Only used if calc_orf is True.
+            isotropic (bool): whether to calculate an isotropic damping matrix. If True,
+                the calculated damping matrix will be isotropic. Default is False.
             n_bz_vecs (int): used for sampling vectors from the first Brillouin zone (BZ) to
                 calculate J(q) if sum_rule_orf is True. n_bz_vecs corresponds to the number
                 of points sampled in two BZ vertices (including the vertices themselves). Only
