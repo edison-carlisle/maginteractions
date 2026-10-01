@@ -27,6 +27,10 @@ class MagInteractions:
         j_ij (list): list of the magnetic interactions in order of increasing
             neighbor distance. E.g. [J1, J2, J3] for a system with interactions
             up to the 3rd nearest neighbor.
+        anisotropy (array): 3D list representing the anisotropy of the system
+            in the form of a vector. E.g. [0, 0, d] for an easy-axis system
+            along the z-axis if d > 0, or an easy-plane system in the xy-plane
+            if d < 0.
         r_max (float): maximum distance to consider for magnetic interactions.
             Used to determine how many neighbors to include in the interaction
             matrix.
@@ -43,8 +47,8 @@ class MagInteractions:
     """
 
     def __init__(self, magstruc=None, temperatures=None, spin_squared=1.0,
-                 j_ij=None, r_max=10.0, spin_dim=3, lat_vecs=None,
-                 basis_vecs=None, occ_avg=1.0):
+                 j_ij=None, anisotropy = [0, 0, 0], r_max=10.0, spin_dim=3,
+                 lat_vecs=None, basis_vecs=None, occ_avg=1.0):
         if temperatures is None:
             temperatures = [1.0]
         if j_ij is None:
@@ -102,6 +106,20 @@ class MagInteractions:
         self.orfs = np.zeros(self.n_temps)
         self.spin_squared = spin_squared
         self.j_ij = list(j_ij)
+        self.anisotropy = np.array(anisotropy)
+        self.isotropic_exchange = True
+        if self.anisotropy.shape != (3,):
+            raise ValueError('anisotropy must be a 3D vector; got shape '
+                             f'{self.anisotropy.shape}.')
+        if np.sum(np.abs(self.anisotropy)) != 0:
+            if spin_dim != 3:
+                raise ValueError('anisotropy can only be included for 3D spin systems; '
+                                 f'got spin_dim={spin_dim}.')
+            if self.anisotropy.shape != (3,):
+                raise ValueError('anisotropy must be a 3D vector; got shape '
+                                    f'{self.anisotropy.shape}.')
+            self.isotropic_exchange = False
+            
         self.r_max = r_max
         self.spin_dim = spin_dim
 
@@ -137,7 +155,17 @@ class MagInteractions:
         max_dist = np.ceil(self.r_max / intercell_dist).astype(int)
         uc_tuple = tuple(2 * max_dist - 1)
         pairwise_distance = np.zeros((self.N, self.N) + uc_tuple)
-        self.j_mat = np.zeros_like(pairwise_distance)
+
+        if not self.isotropic_exchange:
+            if self.anisotropy.shape != (3,):
+                raise ValueError('anisotropy must be a 3D vector; got shape '
+                                 f'{self.anisotropy.shape}.')
+            if self.spin_dim != 3:
+                raise ValueError('anisotropy can only be included for 3D spin systems; '
+                                 f'got spin_dim={self.spin_dim}.')
+            self.j_mat = np.zeros((3, 3) + pairwise_distance.shape)
+        else:
+            self.j_mat = np.zeros((1, 1) + pairwise_distance.shape)
 
         for rx in range(1 - max_dist[0], max_dist[0]):
             for ry in range(1 - max_dist[1], max_dist[1]):
@@ -152,8 +180,17 @@ class MagInteractions:
         self.neighbor_distances = sorted(set(pairwise_distance.flatten()))
 
         for i in range(len(self.j_ij)):
-            self.j_mat += np.where(pairwise_distance == self.neighbor_distances[i + 1],
-                                   self.j_ij[i], 0.0)
+            if self.isotropic_exchange:
+                idx_ab = np.arange(1)
+            else:
+                idx_ab = np.arange(3)
+            self.j_mat[idx_ab, idx_ab] += np.where(pairwise_distance == self.neighbor_distances[i+1],
+                                    self.j_ij[i], 0.0)
+
+        if np.sum(np.abs(self.anisotropy)) != 0:
+            # include anisotropy
+            idx_ij = np.arange(self.N)
+            self.j_mat[:, :, idx_ij, idx_ij, 0, 0, 0] += 2 * np.diag(self.anisotropy)[:, :, None]
 
     def calc_chi_0(self, temperatures=None):
         """calculates the curie susceptibility, chi_0, for the system at each temperature.
@@ -202,14 +239,19 @@ class MagInteractions:
         q_vecs = np.array(q_vecs).reshape((-1, 3))
         n_q = len(q_vecs)
 
-        rx_max, ry_max, rz_max = self.j_mat.shape[2:]
+        rx_max, ry_max, rz_max = self.j_mat.shape[-3:]
         rx_max = int((rx_max + 1) / 2)
         ry_max = int((ry_max + 1) / 2)
         rz_max = int((rz_max + 1) / 2)
 
-        j_q = np.zeros((n_q, self.N, self.N), dtype='complex128')
-        j_mu_q = np.zeros((n_q, self.N))  # eigenvectors of j_q
-        u_q = np.zeros((n_q, self.N, self.N))  # eigenvalues of j_q
+        if self.isotropic_exchange:
+            j_q = np.zeros((n_q, 1, 1, self.N, self.N), dtype='complex128')
+            j_mu_q = np.zeros((n_q, self.N))  # eigenvectors of j_q
+            u_q = np.zeros((n_q, self.N, self.N))  # eigenvalues of j_q
+        else:
+            j_q = np.zeros((n_q, 3, 3, self.N, self.N), dtype='complex128')
+            j_mu_q = np.zeros((n_q, 3 * self.N))  # eigenvectors of j_q
+            u_q = np.zeros((n_q, 3 * self.N, 3 * self.N))  # eigenvalues of j_q
 
         for k, q_vec in enumerate(q_vecs):
             for rx in range(1 - rx_max, rx_max):
@@ -217,10 +259,17 @@ class MagInteractions:
                     for rz in range(1 - rz_max, rz_max):
                         r_vec = np.array([rx, ry, rz]) @ self.lat_vecs
                         phase = np.exp(-1j * np.dot(q_vec, r_vec))
-                        j_q[k] += self.j_mat[:, :, rx, ry, rz] * phase
+                        j_q[k] += self.j_mat[..., rx, ry, rz] * phase
 
             if diagonalize:
-                eig_vals, eig_vecs = np.linalg.eigh(j_q[k])
+                if self.isotropic_exchange:
+                    jq_matrix = j_q[k].reshape((self.N, self.N)) 
+                else:
+                    jq_matrix = np.zeros((3 * self.N, 3 * self.N), dtype = 'complex128')
+                    for i in range(self.N):
+                        for j in range(self.N):
+                            jq_matrix[3 * i:3 * (i + 1), 3 * j:3 * (j + 1)] = j_q[k, :, :, i, j]
+                eig_vals, eig_vecs = np.linalg.eigh(jq_matrix)
                 j_mu_q[k] = eig_vals.astype('float64')
                 u_q[k] = eig_vecs.astype('float64')
 
@@ -444,7 +493,7 @@ class MagInteractions:
 
             def orf_constraint(orf):
                 orf_sum = np.sum((1 - chi_0 * (self.j_q - orf[0]))**(-1))
-                return orf_sum - self.N * len(bz_pts)
+                return orf_sum - self.j_mat.shape[0] * self.N * len(bz_pts)
 
             bounds = (min_orf, max_orf)
             orfs[i] = least_squares(orf_constraint, orf_guess,
